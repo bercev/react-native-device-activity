@@ -71,13 +71,13 @@ class ReactNativeDeviceActivityViewPersisted: ExpoView {
           "applicationCount": selection.applicationTokens.count,
           "categoryCount": selection.categoryTokens.count,
           "webDomainCount": selection.webDomainTokens.count,
-          "includeEntireCategory": selection.includeEntireCategory
+          "includeEntireCategory": selection.includeEntireCategory,
         ])
       } else {
         onSelectionChange([
           "applicationCount": selection.applicationTokens.count,
           "categoryCount": selection.categoryTokens.count,
-          "webDomainCount": selection.webDomainTokens.count
+          "webDomainCount": selection.webDomainTokens.count,
         ])
       }
     }

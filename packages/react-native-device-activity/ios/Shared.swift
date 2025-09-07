@@ -37,7 +37,8 @@ func updateShield(shieldId: String?, triggeredBy: String?, activitySelectionId: 
   let shieldId = shieldId ?? "default"
 
   if var shieldConfiguration = userDefaults?.dictionary(
-    forKey: "shieldConfiguration_\(shieldId)") {
+    forKey: "shieldConfiguration_\(shieldId)")
+  {
 
     shieldConfiguration["shieldId"] = shieldId
     shieldConfiguration["triggeredBy"] = triggeredBy
@@ -53,7 +54,8 @@ func updateShield(shieldId: String?, triggeredBy: String?, activitySelectionId: 
   }
 
   if var shieldActions = userDefaults?.dictionary(
-    forKey: "shieldActions_\(shieldId)") {
+    forKey: "shieldActions_\(shieldId)")
+  {
 
     shieldActions["shieldId"] = shieldId
     shieldActions["triggeredBy"] = triggeredBy
@@ -242,7 +244,8 @@ func executeGenericAction(
     }
   } else if type == "startMonitoring" {
     if let activityName = action["activityName"] as? String,
-      let deviceActivityEvents = action["deviceActivityEvents"] as? [[String: Any]] {
+      let deviceActivityEvents = action["deviceActivityEvents"] as? [[String: Any]]
+    {
 
       startMonitoringAction(
         activityName: activityName,
@@ -344,7 +347,8 @@ func sendNotification(contents: [String: Any], placeholders: [String: String?]) 
 
 // dataRequest which sends request to given URL and convert to Decodable Object
 func sendHttpRequest(with url: String, config: [String: Any], placeholders: [String: String?])
-  -> URLSessionDataTask {
+  -> URLSessionDataTask
+{
   // create the URL
   let url = URL(string: url)!  // change the URL
 
@@ -387,7 +391,8 @@ func sendHttpRequest(with url: String, config: [String: Any], placeholders: [Str
       do {
         // create json object from data
         if let json = try JSONSerialization.jsonObject(with: data, options: .mutableContainers)
-          as? [String: Any] {
+          as? [String: Any]
+        {
           print(json)
         }
       } catch let error {
@@ -449,9 +454,11 @@ struct TextToReplaceWithOptionalSpecialTreatment {
 }
 
 func getTextToReplaceWithOptionalSpecialTreatment(_ stringToReplace: String)
-  -> TextToReplaceWithOptionalSpecialTreatment {
+  -> TextToReplaceWithOptionalSpecialTreatment
+{
   if stringToReplace.starts(with: "{") && stringToReplace.hasSuffix("}")
-    && stringToReplace.contains(":") {
+    && stringToReplace.contains(":")
+  {
     // remove prefix and suffix
     let trimmed = String(stringToReplace.dropFirst().dropLast())
     // split on : and return first part
@@ -478,7 +485,8 @@ func replacePlaceholdersInObject<T: Any>(
       if let specialTreatment = textToReplaceWithOptionalSpecialTreatment.specialTreatment {
         if specialTreatment == "asNumber" {
           if let placeholderValue = placeholders[
-            textToReplaceWithOptionalSpecialTreatment.textToReplace] as? String {
+            textToReplaceWithOptionalSpecialTreatment.textToReplace] as? String
+          {
             if let numberValue = Double(placeholderValue) {
               retVal[key] = numberValue as? T
             }
@@ -486,7 +494,8 @@ func replacePlaceholdersInObject<T: Any>(
         }
         if specialTreatment == "userDefaults" {
           if let value = userDefaults?.string(
-            forKey: textToReplaceWithOptionalSpecialTreatment.textToReplace) {
+            forKey: textToReplaceWithOptionalSpecialTreatment.textToReplace)
+          {
             retVal[key] = value as? T
           }
         }
@@ -524,7 +533,8 @@ func clearAllManagedSettingsStoreSettings() {
 @available(iOS 15.0, *)
 func getFamilyActivitySelectionIds() -> [FamilyActivitySelectionWithId] {
   if let familyActivitySelectionIds = userDefaults?.dictionary(
-    forKey: "familyActivitySelectionIds") {
+    forKey: "familyActivitySelectionIds")
+  {
     return familyActivitySelectionIds.compactMap { (key: String, value: Any) in
       if let familyActivitySelectionStr = value as? String {
         let activitySelection = deserializeFamilyActivitySelection(
@@ -541,7 +551,8 @@ func getFamilyActivitySelectionIds() -> [FamilyActivitySelectionWithId] {
 @available(iOS 15.0, *)
 func getFamilyActivitySelectionById(id: String) -> FamilyActivitySelection? {
   if let familyActivitySelectionIds = userDefaults?.dictionary(
-    forKey: FAMILY_ACTIVITY_SELECTION_ID_KEY) {
+    forKey: FAMILY_ACTIVITY_SELECTION_ID_KEY)
+  {
     if let familyActivitySelectionStr = familyActivitySelectionIds[id] as? String {
       let activitySelection = deserializeFamilyActivitySelection(
         familyActivitySelectionStr: familyActivitySelectionStr
@@ -554,7 +565,8 @@ func getFamilyActivitySelectionById(id: String) -> FamilyActivitySelection? {
 
 func removeFamilyActivitySelectionById(id: String) {
   if var familyActivitySelectionIds = userDefaults?.dictionary(
-    forKey: FAMILY_ACTIVITY_SELECTION_ID_KEY) {
+    forKey: FAMILY_ACTIVITY_SELECTION_ID_KEY)
+  {
     familyActivitySelectionIds.removeValue(forKey: id)
 
     userDefaults?
@@ -569,7 +581,8 @@ func setFamilyActivitySelectionById(id: String, activitySelection: FamilyActivit
   )
 
   if var familyActivitySelectionIds = userDefaults?.dictionary(
-    forKey: FAMILY_ACTIVITY_SELECTION_ID_KEY) {
+    forKey: FAMILY_ACTIVITY_SELECTION_ID_KEY)
+  {
     familyActivitySelectionIds[id] = serialized
 
     userDefaults?
@@ -585,7 +598,8 @@ func setFamilyActivitySelectionById(id: String, activitySelection: FamilyActivit
 @available(iOS 15.0, *)
 func renameFamilyActivitySelectionId(previousId: String, newId: String) {
   if var familyActivitySelectionIds = userDefaults?.dictionary(
-    forKey: FAMILY_ACTIVITY_SELECTION_ID_KEY) {
+    forKey: FAMILY_ACTIVITY_SELECTION_ID_KEY)
+  {
     familyActivitySelectionIds[newId] = familyActivitySelectionIds[previousId]
     familyActivitySelectionIds.removeValue(forKey: previousId)
 
@@ -729,7 +743,8 @@ func getPossibleFamilyActivitySelectionIds(
 
 @available(iOS 15.0, *)
 func deserializeFamilyActivitySelection(familyActivitySelectionStr: String)
-  -> FamilyActivitySelection {
+  -> FamilyActivitySelection
+{
   var activitySelection = FamilyActivitySelection()
 
   let decoder = JSONDecoder()
@@ -775,7 +790,8 @@ func disableBlockAllMode(triggeredBy: String) {
 func setsIncludesEntireCategory(
   _ selection1: FamilyActivitySelection, _ selection2: FamilyActivitySelection
 )
-  -> Bool {
+  -> Bool
+{
   if #available(iOS 15.2, *) {
     let selection1Safe = selection1.includeEntireCategory || selection1.categoryTokens.count == 0
 
@@ -789,7 +805,8 @@ func setsIncludesEntireCategory(
 
 @available(iOS 15.0, *)
 func intersection(_ selection1: FamilyActivitySelection, _ selection2: FamilyActivitySelection)
-  -> FamilyActivitySelection {
+  -> FamilyActivitySelection
+{
   let applicationTokens = selection1.applicationTokens.intersection(
     selection2.applicationTokens
   )
@@ -852,7 +869,8 @@ func symmetricDifference(
 
 @available(iOS 15.0, *)
 func difference(_ selection1: FamilyActivitySelection, _ selection2: FamilyActivitySelection)
-  -> FamilyActivitySelection {
+  -> FamilyActivitySelection
+{
   let applicationTokens = selection1.applicationTokens.subtracting(
     selection2.applicationTokens
   )
@@ -883,7 +901,8 @@ func difference(_ selection1: FamilyActivitySelection, _ selection2: FamilyActiv
 
 @available(iOS 15.0, *)
 func union(_ selection1: FamilyActivitySelection, _ selection2: FamilyActivitySelection)
-  -> FamilyActivitySelection {
+  -> FamilyActivitySelection
+{
   let applicationTokens = selection1.applicationTokens.union(
     selection2.applicationTokens
   )
@@ -1097,7 +1116,7 @@ func updateBlock(triggeredBy: String) {
       "blocklistCategoryCount": currentBlocklist.categoryTokens.count,
       "whitelistAppCount": currentWhitelist.applicationTokens.count,
       "whitelistWebDomainCount": currentWhitelist.webDomainTokens.count,
-      "whitelistCategoryCount": currentWhitelist.categoryTokens.count
+      "whitelistCategoryCount": currentWhitelist.categoryTokens.count,
     ], forKey: "lastBlockUpdate")
 
   updateBlockInternal(
@@ -1181,7 +1200,8 @@ func getColor(color: [String: Double]?) -> UIColor? {
 }
 
 func userDefaultKeyForEvent(activityName: String, callbackName: String, eventName: String? = nil)
-  -> String {
+  -> String
+{
 
   let fullEventName =
     eventName == nil
@@ -1324,7 +1344,8 @@ func shouldExecuteAction(
       eventName: eventName
     ) {
       if lastTriggeredAt >= skipIfAlreadyTriggeredBetweenFromDate
-        && lastTriggeredAt <= skipIfAlreadyTriggeredBetweenToDate {
+        && lastTriggeredAt <= skipIfAlreadyTriggeredBetweenToDate
+      {
         logger.log(
           "skipping executing actions for \(callbackName, privacy: .public)\(eventName ?? "", privacy: .public) because the last triggered time is between \(skipIfAlreadyTriggeredBetweenFromDate, privacy: .public) and \(skipIfAlreadyTriggeredBetweenToDate, privacy: .public)"
         )
@@ -1348,7 +1369,8 @@ func shouldExecuteAction(
     }
   }
 
-  if let skipIfLargerEventRecordedAfter = skipIfLargerEventRecordedAfter, let eventName = eventName {
+  if let skipIfLargerEventRecordedAfter = skipIfLargerEventRecordedAfter, let eventName = eventName
+  {
     if hasHigherTriggeredEvent(
       activityName: activityName,
       callbackName: callbackName,
@@ -1380,7 +1402,8 @@ func shouldExecuteAction(
   }
 
   if let skipIfLargerEventRecordedWithinMS = skipIfLargerEventRecordedWithinMS,
-    let eventName = eventName {
+    let eventName = eventName
+  {
     let skipIfLargerEventRecordedAfter =
       Date().timeIntervalSince1970 * 1000 - skipIfLargerEventRecordedWithinMS
     if hasHigherTriggeredEvent(
@@ -1397,7 +1420,8 @@ func shouldExecuteAction(
   }
 
   if let skipIfLargerEventRecordedSinceIntervalStarted =
-    skipIfLargerEventRecordedSinceIntervalStarted, let eventName = eventName {
+    skipIfLargerEventRecordedSinceIntervalStarted, let eventName = eventName
+  {
     if skipIfLargerEventRecordedSinceIntervalStarted {
       if let skipIfLargerEventRecordedAfter = getLastTriggeredTimeFromUserDefaults(
         activityName: activityName,

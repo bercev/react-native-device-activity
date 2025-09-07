@@ -7,7 +7,9 @@
 
 import FamilyControls
 import ManagedSettings
+import ManagedSettingsUI
 import UIKit
+import UserNotifications
 
 func handleShieldAction(
   configForSelectedAction: [String: Any],
@@ -197,8 +199,36 @@ func handleAction(
           ? WebDomain(
             token: webdomainToken!
           ).domain : nil,
-        "familyActivitySelectionId": familyActivitySelectionId?.id
+        "familyActivitySelectionId": familyActivitySelectionId?.id,
       ]
+
+      let actionButton = action == .primaryButtonPressed ? "primary" : "secondary"
+      let scope: String =
+        applicationToken != nil
+        ? "App"
+        : (webdomainToken != nil ? "Website" : (categoryToken != nil ? "Category" : "Shield"))
+
+      // Build a friendly target name directly from tokens to avoid String??
+      let targetName: String? = {
+        if let app = applicationToken {
+          return Application(token: app).localizedDisplayName
+        } else if let web = webdomainToken {
+          return WebDomain(token: web).domain
+        } else if let cat = categoryToken {
+          return ActivityCategory(token: cat).localizedDisplayName
+        }
+        return nil
+      }()
+
+      /*
+      let prettyTarget = targetName ?? "Unknown"
+      if shouldNotifyFor(action: action) {
+        scheduleLocalNotification(
+          title: "Shield action",
+          body: "\(scope): \(prettyTarget) – tapped \(actionButton.capitalized)"
+        )
+      }
+      */
 
       let response = handleShieldAction(
         configForSelectedAction: configForSelectedAction,
@@ -222,10 +252,36 @@ func handleAction(
   }
 }
 
+// NOTIFICATION SCHEDULING
+func shouldNotifyFor(action: ShieldAction) -> Bool {
+  let primary = userDefaults?.string(forKey: "shield.btn.primary")?.lowercased()
+  let secondary = userDefaults?.string(forKey: "shield.btn.secondary")?.lowercased()
+  let tapped = (action == .primaryButtonPressed) ? primary : secondary
+  // Only notify for a Return button tap (change this string to your keyword)
+  return tapped == "return"
+}
+
+func scheduleLocalNotification(title: String, body: String) {
+  let content = UNMutableNotificationContent()
+  content.title = title
+  content.body = body
+  content.sound = .default
+
+  // fire almost immediately
+  let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+  let req = UNNotificationRequest(
+    identifier: "shield.action.\(UUID().uuidString)",
+    content: content,
+    trigger: trigger
+  )
+  UNUserNotificationCenter.current().add(req, withCompletionHandler: nil)
+}
+
 // Override the functions below to customize the shield actions used in various situations.
 // The system provides a default response for any functions that your subclass doesn't override.
 // Make sure that your class name matches the NSExtensionPrincipalClass in your Info.plist.
 class ShieldActionExtension: ShieldActionDelegate {
+
   override func handle(
     action: ShieldAction, for application: ApplicationToken,
     completionHandler: @escaping (ShieldActionResponse) -> Void

@@ -62,7 +62,7 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
     let placeholders = [
       "activityName": activityName,
       "callbackName": callbackName,
-      "eventName": eventName
+      "eventName": eventName,
     ]
 
     let originalWhitelist = getCurrentWhitelist()

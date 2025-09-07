@@ -133,7 +133,8 @@ struct DeviceActivityEventFromJS: ExpoModulesCore.Record {
   var includesPastActivity: Bool?
 }
 
-func convertToSwiftDateComponents(from dateComponentsFromJS: DateComponentsFromJS) -> DateComponents {
+func convertToSwiftDateComponents(from dateComponentsFromJS: DateComponentsFromJS) -> DateComponents
+{
   var swiftDateComponents = DateComponents()
 
   if let era = dateComponentsFromJS.era {
