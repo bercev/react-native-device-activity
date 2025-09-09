@@ -14,6 +14,101 @@ import os
 
 import CryptoKit
 
+// =========================================================
+// These help with the webdomain configuration
+fileprivate func webDomainMessage(cfg: [String: Any], webDomain: WebDomain, openCount: Int) -> String {
+  if let perDomain = cfg["perDomain"] as? [String: Any],
+     let key = webDomain.domain?.lowercased(),
+     let domCfg = perDomain[key] as? [String: Any],
+     let arr = domCfg["messages"] as? [String], !arr.isEmpty {
+    let idx = (max(openCount, 1) - 1) % arr.count
+    return arr[idx]
+  }
+  if let arr = cfg["messages"] as? [String], !arr.isEmpty {
+    let idx = (max(openCount, 1) - 1) % arr.count
+    return arr[idx]
+  }
+  return "Come back to Retention and study!"
+}
+
+fileprivate func webDomainPlaceholders(
+  webDomain: WebDomain,
+  category: ActivityCategory?,
+  openCount: Int,
+  cfg: [String: Any]
+) -> [String: String?] {
+  let webDomainTokenStr = webDomain.token.map { stableTokenString($0) }
+  var placeholders: [String: String?] = [
+    "applicationOrDomainDisplayName": webDomain.domain ?? "(Unknown site)",
+    "domainDisplayName": webDomain.domain ?? "(Unknown site)",
+    "webDomainToken": webDomainTokenStr,
+    "tokenType": category == nil ? "web_domain" : "web_domain_category",
+    "familyActivitySelectionId": getPossibleFamilyActivitySelectionIds(
+      webDomainToken: webDomain.token, categoryToken: category?.token
+    ).first?.id,
+    "shieldOpenCount": "\(openCount)",
+    "shieldMessage": webDomainMessage(cfg: cfg, webDomain: webDomain, openCount: openCount),
+  ]
+  if let category {
+    let categoryTokenStr = category.token.map { stableTokenString($0) }
+    placeholders["categoryDisplayName"] = category.localizedDisplayName
+    placeholders["categoryToken"] = categoryTokenStr
+    placeholders["token"] = categoryTokenStr        // keep your generic {token} as category here
+  } else {
+    placeholders["token"] = webDomainTokenStr       // generic {token} = domain for domain-only
+  }
+  if let global = cfg["globalPlaceholders"] as? [String: String] {
+    for (k, v) in global { placeholders[k] = v }
+  }
+  return placeholders
+}
+// =========================================================
+
+// =========================================================
+// these help with separating shields so we dont run into issues with using the wrong shield for a particular selection
+fileprivate func selectionConfig(cfg: [String: Any], selectionId: String?) -> [String: Any]? {
+  guard let selectionId,
+        let perSel = cfg["perSelectionId"] as? [String: Any],
+        let sCfg   = perSel[selectionId] as? [String: Any] else { return nil }
+  return sCfg
+}
+
+fileprivate func finalShieldConfig(
+  cfg: [String: Any],
+  applicationToken: ApplicationToken?,
+  webDomainToken: WebDomainToken?,
+  categoryToken: ActivityCategoryToken?
+) -> [String: Any] {
+  // figure out the selection id the OS thinks applies here
+  let selectionId = getPossibleFamilyActivitySelectionIds(
+    applicationToken: applicationToken,
+    webDomainToken: webDomainToken,
+    categoryToken: categoryToken
+  ).first?.id
+
+  // 1) JS per-selection (shield.config.v1 → perSelectionId)
+  if let c = selectionConfig(cfg: cfg, selectionId: selectionId) {
+    return c
+  }
+
+  // 2) Native library’s prefixed store (uses tokens to resolve)
+  if let c = getActivitySelectionPrefixedConfigFromUserDefaults(
+    keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
+    fallbackKey: FALLBACK_SHIELD_CONFIGURATION_KEY,
+    applicationToken: applicationToken,
+    webDomainToken: webDomainToken,
+    categoryToken: categoryToken
+  ) {
+    return c
+  }
+
+  // 3) Global JS config as a last resort
+  return cfg
+}
+// =========================================================
+
+// =========================================================
+// these help with the overall system of changing the shield message based on # times an app has been accessed while in a blocked stated
 fileprivate func stableAppKey(_ application: Application) -> String {
   if let bid = application.bundleIdentifier, !bid.isEmpty { return "app:\(bid)" }
   return "app:" + (application.token.map { stableTokenString($0) } ?? "unknown")
@@ -101,23 +196,39 @@ fileprivate func loadJSShieldConfig() -> [String: Any] {
   (UserDefaults(suiteName: appGroup)?.dictionary(forKey: "shield.config.v1")) ?? [:]
 }
 
-// Prefer per-app messages (by bundle id), else global; index safely from openCount
-fileprivate func messageFromConfig(cfg: [String: Any], bundleId: String?, openCount: Int) -> String? {
-  var messages: [String] = []
-  if
-    let bundleId,
-    let perApp = cfg["perApp"] as? [String: Any],
-    let appCfg = perApp[bundleId] as? [String: Any],
-    let arr = appCfg["messages"] as? [String]
-  {
-    messages = arr
-  } else if let arr = cfg["messages"] as? [String] {
-    messages = arr
+// Prefer per-selection messages, else per-app, else global
+fileprivate func messageFromConfig(
+  cfg: [String: Any],
+  bundleId: String?,
+  selectionId: String?,
+  openCount: Int
+) -> String? {
+  // 1) per selection
+  if let sCfg = selectionConfig(cfg: cfg, selectionId: selectionId),
+     let arr = sCfg["messages"] as? [String], !arr.isEmpty {
+    let idx = (max(openCount, 1) - 1) % arr.count
+    return arr[idx]
   }
-  guard !messages.isEmpty else { return nil }
-  let idx = max(openCount - 1, 0) % messages.count   // start from first message at count == 1
-  return messages[idx]
+  // 2) per app
+  if let bundleId,
+     let perApp = cfg["perApp"] as? [String: Any],
+     let appCfg = perApp[bundleId] as? [String: Any],
+     let arr = appCfg["messages"] as? [String], !arr.isEmpty {
+    let idx = (max(openCount, 1) - 1) % arr.count
+    return arr[idx]
+  }
+  // 3) global
+  if let arr = cfg["messages"] as? [String], !arr.isEmpty {
+    let idx = (max(openCount, 1) - 1) % arr.count
+    return arr[idx]
+  }
+  return nil
 }
+
+// =========================================================
+// end of changes
+// =========================================================
+
 
 
 func convertBase64StringToImage(imageBase64String: String?) -> UIImage? {
@@ -237,12 +348,13 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
   override func configuration(shielding application: Application) -> ShieldConfiguration {
     // Customize the shield as needed for applications.
     logger.log("shielding application")
+    /*
     let config = getActivitySelectionPrefixedConfigFromUserDefaults(
       keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
       fallbackKey: FALLBACK_SHIELD_CONFIGURATION_KEY,
       applicationToken: application.token
     )
-
+    */  
     // !! showing a different shield each time
     let tokenHash = stableAppKey(application)
     let openCount = bumpOpenCount(appKey: tokenHash)
@@ -252,16 +364,23 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
       // If `Application(token:).bundleIdentifier` isn’t available on your SDK, this stays nil.
       bundleId = Application(token: tok).bundleIdentifier
     }
-    let msg = messageFromConfig(cfg: cfg, bundleId: bundleId, openCount: openCount) ?? "Come back to Retention and study!"
+    let selectionId = getPossibleFamilyActivitySelectionIds(applicationToken: application.token).first?.id
+    let msg = messageFromConfig(cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: openCount)
+                ?? "Come back to Retention and study!"
+    
 
-
+    let config = finalShieldConfig(
+      cfg: cfg,
+      applicationToken: application.token,
+      webDomainToken: nil,
+      categoryToken: nil
+    )
+    
     var placeholders: [String: String?] = [
       "applicationOrDomainDisplayName": application.localizedDisplayName,
       "token": "\(tokenHash)",
       "tokenType": "application",
-      "familyActivitySelectionId": getPossibleFamilyActivitySelectionIds(
-        applicationToken: application.token
-      ).first?.id,
+      "familyActivitySelectionId": selectionId,
       "shieldOpenCount": "\(openCount)",
       "shieldMessage": msg
     ]
@@ -272,7 +391,7 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
 
     return buildShield(
       placeholders: placeholders,
-      config: config
+      config: config  // use the scoped config if its available, else default to original
     )
   }
 
@@ -280,12 +399,14 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
     -> ShieldConfiguration
   {
     logger.log("shielding application category")
+    /*
     let config = getActivitySelectionPrefixedConfigFromUserDefaults(
       keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
       fallbackKey: FALLBACK_SHIELD_CONFIGURATION_KEY,
       applicationToken: application.token,
       categoryToken: category.token
     )
+    */
 
     let tokenHash = stableAppKey(application)
     let openCount = bumpOpenCount(appKey: tokenHash)
@@ -295,12 +416,22 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
       // If `Application(token:).bundleIdentifier` isn’t available on your SDK, this stays nil.
       bundleId = Application(token: tok).bundleIdentifier
     }
-    let msg = messageFromConfig(cfg: cfg, bundleId: bundleId, openCount: max(openCount, 1))
+
+    let selectionId = getPossibleFamilyActivitySelectionIds(
+        applicationToken: application.token,
+        categoryToken: category.token
+      ).first?.id
+    let msg = messageFromConfig(cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: max(openCount, 1))
             ?? "Come back to Retention and study!"
 
     let applicationTokenStr = application.token.map { stableTokenString($0) } // your helper
     let categoryTokenStr    = category.token.map { stableTokenString($0) }    // your helper
-
+    let config = finalShieldConfig(
+      cfg: cfg,
+      applicationToken: application.token,
+      webDomainToken: nil,
+      categoryToken: category.token
+    )
     var placeholders: [String: String?] = [
       "applicationOrDomainDisplayName": application.localizedDisplayName,
       "categoryDisplayName": category.localizedDisplayName,
@@ -309,13 +440,16 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
       "categoryToken": categoryTokenStr,
       // keep a generic type for templates if you need it
       "tokenType": "application_category",
-      "familyActivitySelectionId": getPossibleFamilyActivitySelectionIds(
-        applicationToken: application.token,
-        categoryToken: category.token
-      ).first?.id,
+      "familyActivitySelectionId": selectionId,
       "shieldOpenCount": "\(openCount)",
       "shieldMessage": msg
     ]
+
+    if let global = cfg["globalPlaceholders"] as? [String: String] {
+      for (k, v) in global { placeholders[k] = v }
+    }
+
+
 
     return buildShield(
       placeholders: placeholders,
@@ -326,110 +460,42 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
   override func configuration(shielding webDomain: WebDomain) -> ShieldConfiguration {
      logger.log("shielding web domain")
 
+    /*
     let config = getActivitySelectionPrefixedConfigFromUserDefaults(
       keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
       fallbackKey: FALLBACK_SHIELD_CONFIGURATION_KEY,
       webDomainToken: webDomain.token
     )
+    */
+  let domKey    = stableDomainKey(webDomain)
+  let openCount = bumpOpenCount(appKey: domKey)
+  let cfg       = loadJSShieldConfig()
+  let config    = finalShieldConfig(cfg: cfg, applicationToken: nil, webDomainToken: webDomain.token, categoryToken: nil)
 
-    // Increment (debounced) per-domain
-    let domKey    = stableDomainKey(webDomain)
-    let openCount = bumpOpenCount(appKey: domKey)
-
-    // JS-driven copy (perDomain['domain'] or global messages)
-    let cfg = loadJSShieldConfig()
-    let msg: String? = {
-        if let perDomain = cfg["perDomain"] as? [String: Any],
-        let domainKey = webDomain.domain?.lowercased(),                  // ✅ unwrap
-        let domCfg = perDomain[domainKey] as? [String: Any],
-        let arr = domCfg["messages"] as? [String], !arr.isEmpty {
-        let idx = (max(openCount, 1) - 1) % arr.count                     // loop
-        return arr[idx]
-      }
-      if let arr = cfg["messages"] as? [String], !arr.isEmpty {
-        return arr[(max(openCount, 1) - 1) % arr.count]
-      }
-      return "Come back to Retention and study!"
-    }()
-
-    let webDomainTokenStr = webDomain.token.map { stableTokenString($0) }
-
-    var placeholders: [String: String?] = [
-      "applicationOrDomainDisplayName": webDomain.domain ?? "(Unknown site)",
-      "domainDisplayName": webDomain.domain ?? "(Unknown site)",
-      "token": webDomainTokenStr,         // generic token = domain by default
-      "webDomainToken": webDomainTokenStr,
-      "tokenType": "web_domain",
-      "familyActivitySelectionId": getPossibleFamilyActivitySelectionIds(
-        webDomainToken: webDomain.token
-      ).first?.id,
-      "shieldOpenCount": "\(openCount)",
-      "shieldMessage": msg,
-    ]
-
-    if let global = cfg["globalPlaceholders"] as? [String: String] {
-      for (k, v) in global { placeholders[k] = v }
-    }
-
+  let placeholders = webDomainPlaceholders(webDomain: webDomain, category: nil, openCount: openCount, cfg: cfg)
     return buildShield(placeholders: placeholders, config: config)
   }
+
 
   override func configuration(shielding webDomain: WebDomain, in category: ActivityCategory)
     -> ShieldConfiguration
   {
     logger.log("shielding web domain category")
 
+    /*
     let config = getActivitySelectionPrefixedConfigFromUserDefaults(
       keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
       fallbackKey: FALLBACK_SHIELD_CONFIGURATION_KEY,
       webDomainToken: webDomain.token,
       categoryToken: category.token
     )
+    */
+  let domKey    = stableDomainKey(webDomain)
+  let openCount = bumpOpenCount(appKey: domKey)
+  let cfg       = loadJSShieldConfig()
+  let config    = finalShieldConfig(cfg: cfg, applicationToken: nil, webDomainToken: webDomain.token, categoryToken: category.token)
 
-  
-    let domKey    = stableDomainKey(webDomain)
-    let openCount = bumpOpenCount(appKey: domKey)
-  
-    // JS-driven copy (perDomain['domain'] or global messages)
-    let cfg = loadJSShieldConfig()
-    let msg: String? = {
-      if let perDomain = cfg["perDomain"] as? [String: Any],
-      let domainKey = webDomain.domain?.lowercased(),                  // ✅ unwrap
-      let domCfg = perDomain[domainKey] as? [String: Any],
-      let arr = domCfg["messages"] as? [String], !arr.isEmpty {
-      let idx = (max(openCount, 1) - 1) % arr.count                     // loop
-      return arr[idx]
-    }
-      if let arr = cfg["messages"] as? [String], !arr.isEmpty {
-        return arr[(max(openCount, 1) - 1) % arr.count]
-      }
-      return "Come back to Retention and study!"
-    }()
-
-    let webDomainTokenStr = webDomain.token.map { stableTokenString($0) }
-    let categoryTokenStr  = category.token.map { stableTokenString($0) }
-
-    var placeholders: [String: String?] = [
-      "applicationOrDomainDisplayName": webDomain.domain ?? "(Unknown site)",
-      "domainDisplayName": webDomain.domain ?? "(Unknown site)",
-      "categoryDisplayName": category.localizedDisplayName,
-      // keep generic {token} as category (matches your previous behavior)
-      "token": categoryTokenStr,
-      "webDomainToken": webDomainTokenStr,
-      "categoryToken": categoryTokenStr,
-      "tokenType": "web_domain_category",
-      "familyActivitySelectionId": getPossibleFamilyActivitySelectionIds(
-        webDomainToken: webDomain.token,
-        categoryToken: category.token
-      ).first?.id,
-      "shieldOpenCount": "\(openCount)",
-      "shieldMessage": msg,
-    ]
-
-    if let global = cfg["globalPlaceholders"] as? [String: String] {
-      for (k, v) in global { placeholders[k] = v }
-    }
-
-    return buildShield(placeholders: placeholders, config: config)
+  let placeholders = webDomainPlaceholders(webDomain: webDomain, category: category, openCount: openCount, cfg: cfg)
+  return buildShield(placeholders: placeholders, config: config)
   }
 }
