@@ -196,56 +196,35 @@ class NativeEventObserver {
   let notificationCenter = CFNotificationCenterGetDarwinNotifyCenter()
   let observer: UnsafeRawPointer
 
-  // Keep strong references so contexts aren't deallocated.
-  private var _boxes: [UnsafeMutableRawPointer] = []
-
-  private final class ObserverBox {
-    unowned let module: BaseModule
-    let key: String
-    init(module: BaseModule, key: String) {
-      self.module = module
-      self.key = key
-    }
-  }
-
   func registerListener(name: String) {
     let notificationName = name as CFString
-
-    // Recreate the module from the original pointer once,
-    // then box (module + key) for this specific listener.
-    let module = Unmanaged<BaseModule>.fromOpaque(observer).takeUnretainedValue()
-    let box = ObserverBox(module: module, key: name)
-    let boxPtr = UnsafeMutableRawPointer(Unmanaged.passRetained(box).toOpaque())
-    _boxes.append(boxPtr)
-
     CFNotificationCenterAddObserver(
       notificationCenter,
-      boxPtr, // pass the box pointer (module + key) as the observer
-      { (
+      observer,
+      {
+        (
           _: CFNotificationCenter?,
           observer: UnsafeMutableRawPointer?,
-          _: CFNotificationName?,  // don't touch CF name; use boxed key
+          name: CFNotificationName?,
           _: UnsafeRawPointer?,
           _: CFDictionary?
         ) in
-          guard let observer = observer else { return }
-          let box = Unmanaged<ObserverBox>.fromOpaque(observer).takeUnretainedValue()
-          // Send on main to avoid threading issues if bridge is mid-reload
-          DispatchQueue.main.async {
-            box.module.sendEvent(
-              "onDeviceActivityMonitorEvent",
-              ["callbackName": box.key]
-            )
-          }
+        if let observer = observer, let name = name {
+          let mySelf = Unmanaged<BaseModule>.fromOpaque(observer).takeUnretainedValue()
+
+          mySelf.sendEvent(
+            "onDeviceActivityMonitorEvent" as String,
+            [
+              "callbackName": name.rawValue
+            ])
+        }
       },
       notificationName,
       nil,
-      .deliverImmediately
-    )
+      CFNotificationSuspensionBehavior.deliverImmediately)
   }
 
   init(module: BaseModule) {
-    // Keep the original module pointer (used to create boxes above)
     observer = UnsafeRawPointer(Unmanaged.passUnretained(module).toOpaque())
     registerListener(name: "intervalDidStart")
     registerListener(name: "intervalDidEnd")
@@ -254,17 +233,7 @@ class NativeEventObserver {
     registerListener(name: "intervalWillEndWarning")
     registerListener(name: "eventWillReachThresholdWarning")
   }
-
-  deinit {
-    // Clean up observers and release retained boxes
-    for ptr in _boxes {
-      CFNotificationCenterRemoveObserver(notificationCenter, ptr, nil, nil)
-      Unmanaged<ObserverBox>.fromOpaque(ptr).release()
-    }
-    _boxes.removeAll()
-  }
 }
-
 
 @available(iOS 15.0, *)
 func tokenSetsAreEqual<T>(
