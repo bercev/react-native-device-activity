@@ -32,7 +32,7 @@ packageFiles.forEach((filePath) => {
         const actualVersion =
           version === "workspace:*"
             ? packageVersions[name]
-            : version.replace("workspace:", "");
+            : version.replace("workspace:", "*");
 
         if (actualVersion) {
           newDeps[name] = actualVersion;
