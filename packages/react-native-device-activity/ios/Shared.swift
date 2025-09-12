@@ -165,6 +165,9 @@ func executeGenericAction(
         userDefaults?
           .removeObject(
             forKey: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX + "_" + familyActivitySelectionId)
+        
+        // !! changed here!
+        userDefaults?.removeObject(forKey: SHIELD_ACTIONS_FOR_SELECTION_PREFIX + "_" + familyActivitySelectionId)
       }
     }
   } else if type == "addSelectionToWhitelist" {
