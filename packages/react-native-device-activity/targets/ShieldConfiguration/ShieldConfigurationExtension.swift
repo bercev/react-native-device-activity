@@ -13,6 +13,27 @@ import ManagedSettingsUI
 import UIKit
 import os
 
+
+// ================================
+// These help with getting a specific shield configuration based on selectionid
+private func selectionIdFor(
+  applicationToken: ApplicationToken? = nil,
+  webDomainToken: WebDomainToken? = nil,
+  categoryToken: ActivityCategoryToken? = nil
+) -> String? {
+  // Ask the same resolver that getActivitySelectionPrefixedConfigFromUserDefaults uses
+  if let key = tryGetActivitySelectionIdConfigKey(
+        keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
+        applicationToken: applicationToken,
+        webDomainToken: webDomainToken,
+        categoryToken: categoryToken
+      ) {
+    let prefix = SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX + "_"
+    return key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
+  }
+  return nil
+}
+
 // =========================================================
 // These help with the webdomain configuration
 private func webDomainMessage(cfg: [String: Any], webDomain: WebDomain, openCount: Int) -> String {
@@ -43,8 +64,9 @@ private func webDomainPlaceholders(
     "domainDisplayName": webDomain.domain ?? "(Unknown site)",
     "webDomainToken": webDomainTokenStr,
     "tokenType": category == nil ? "web_domain" : "web_domain_category",
-    "familyActivitySelectionId": getPossibleFamilyActivitySelectionIds(
-      webDomainToken: webDomain.token, categoryToken: category?.token
+    "familyActivitySelectionId": selectionIdFor(webDomainToken: webDomain.token, categoryToken: category?.token) ?? getPossibleFamilyActivitySelectionIds(
+      webDomainToken: webDomain.token,
+      categoryToken: category?.token
     ).first?.id,
     "shieldOpenCount": "\(openCount)",
     "shieldMessage": webDomainMessage(cfg: cfg, webDomain: webDomain, openCount: openCount),
@@ -330,8 +352,7 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
       // If `Application(token:).bundleIdentifier` isn’t available on your SDK, this stays nil.
       bundleId = Application(token: tok).bundleIdentifier
     }
-    let selectionId = getPossibleFamilyActivitySelectionIds(applicationToken: application.token)
-      .first?.id
+    let selectionId = selectionIdFor(applicationToken: application.token) ?? getPossibleFamilyActivitySelectionIds(applicationToken: application.token).first?.id
     let msg =
       messageFromConfig(
         cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: openCount)
@@ -376,10 +397,7 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
       bundleId = Application(token: tok).bundleIdentifier
     }
 
-    let selectionId = getPossibleFamilyActivitySelectionIds(
-      applicationToken: application.token,
-      categoryToken: category.token
-    ).first?.id
+    let selectionId = selectionIdFor(applicationToken: application.token, categoryToken: category.token) ?? getPossibleFamilyActivitySelectionIds(applicationToken: application.token, categoryToken: category.token).first?.id
     let msg =
       messageFromConfig(
         cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: max(openCount, 1))
