@@ -41,6 +41,7 @@ export async function requestAuthorization(
   } catch (error) {
     // seems like we get a promise rejection if the user denies the authorization, but we can still request again
     console.error(error);
+    throw error;
   }
 }
 
