@@ -197,12 +197,17 @@ func executeGenericAction(
     clearWhitelist()
   } else if type == "disableBlockAllMode" {
     disableBlockAllMode(triggeredBy: triggeredBy)
-  } else if type == "openApp" {
-    // todo: replace with general string
-    openUrl(urlString: "device-activity://")
-
-    sleep(ms: 1000)
-  } else if type == "enableBlockAllMode" {
+  } else if type == "openUrl" {
+    // open arbitrary URL passed from JS
+    let urlString = action["url"] as? String ?? "device-activity://"
+    openUrl(urlString: urlString)
+  } else if type == "openUrlWithDispatch" {
+    // same as openUrl, but make sure we call it on the main queue
+    let urlString = action["url"] as? String ?? "device-activity://"
+    DispatchQueue.main.async {
+      openUrl(urlString: urlString)
+    }
+  }else if type == "enableBlockAllMode" {
     updateShield(
       shieldId: action["shieldId"] as? String,
       triggeredBy: triggeredBy,
