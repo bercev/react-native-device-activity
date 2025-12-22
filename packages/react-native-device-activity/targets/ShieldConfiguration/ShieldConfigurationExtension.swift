@@ -14,6 +14,38 @@ import UIKit
 import os
 
 
+// Logic to help with choosing specific messages
+
+// MARK: - Message array helpers
+
+private func _readBool(_ obj: Any?, default defaultValue: Bool) -> Bool {
+  if let b = obj as? Bool { return b }
+  if let n = obj as? NSNumber { return n.boolValue }
+  if let s = obj as? String {
+    let v = s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    if v == "true" || v == "1" { return true }
+    if v == "false" || v == "0" { return false }
+  }
+  return defaultValue
+}
+
+private func _pickIndex(openCount: Int, arrayCount: Int, loop: Bool) -> Int {
+  guard arrayCount > 0 else { return 0 }
+  let i = max(openCount - 1, 0)
+  if loop {
+    return i % arrayCount
+  } else {
+    return min(i, arrayCount - 1)
+  }
+}
+
+private func _pickMessage(_ arrAny: Any?, openCount: Int, loop: Bool) -> String? {
+  guard let arr = arrAny as? [String], !arr.isEmpty else { return nil }
+  let idx = _pickIndex(openCount: openCount, arrayCount: arr.count, loop: loop)
+  return arr[idx]
+}
+
+
 // ================================
 // These help with getting a specific shield configuration based on selectionid
 private func selectionIdFor(
@@ -37,20 +69,29 @@ private func selectionIdFor(
 // =========================================================
 // These help with the webdomain configuration
 private func webDomainMessage(cfg: [String: Any], webDomain: WebDomain, openCount: Int) -> String {
+  // 1) per-domain
   if let perDomain = cfg["perDomain"] as? [String: Any],
-    let key = webDomain.domain?.lowercased(),
-    let domCfg = perDomain[key] as? [String: Any],
-    let arr = domCfg["messages"] as? [String], !arr.isEmpty
+     let key = webDomain.domain?.lowercased(),
+     let domCfg = perDomain[key] as? [String: Any],
+     let arr = domCfg["messages"] as? [String],
+     !arr.isEmpty
   {
-    let idx = (max(openCount, 1) - 1) % arr.count
+    let loop = _readBool(domCfg["loopMessages"], default: _readBool(cfg["loopMessages"], default: true))
+    let idx = _pickIndex(openCount: openCount, arrayCount: arr.count, loop: loop)
     return arr[idx]
   }
+
+  // 2) global
   if let arr = cfg["messages"] as? [String], !arr.isEmpty {
-    let idx = (max(openCount, 1) - 1) % arr.count
+    let loop = _readBool(cfg["loopMessages"], default: true)
+    let idx = _pickIndex(openCount: openCount, arrayCount: arr.count, loop: loop)
     return arr[idx]
   }
+
+  // 3) fallback
   return "Come back to Retention and study!"
 }
+
 
 private func webDomainPlaceholders(
   webDomain: WebDomain,
@@ -58,6 +99,16 @@ private func webDomainPlaceholders(
   openCount: Int,
   cfg: [String: Any]
 ) -> [String: String?] {
+
+  let domainKey = webDomain.domain?.lowercased()
+  let perDomain = cfg["perDomain"] as? [String: Any]
+  let domCfg = (domainKey != nil ? (perDomain?[domainKey!] as? [String: Any]) : nil) ?? cfg
+
+  let loop = _readBool(domCfg["loopMessages"], default: _readBool(cfg["loopMessages"], default: true))
+  let shieldMsg = _pickMessage(domCfg["messages"], openCount: openCount, loop: loop) ?? "Come back to Retention and study!"
+  let titleMsg = _pickMessage(domCfg["titleMessages"], openCount: openCount, loop: loop)
+  let subtitleMsg = _pickMessage(domCfg["subtitleMessages"], openCount: openCount, loop: loop)
+
   let webDomainTokenStr = webDomain.token.map { stableTokenString($0) }
   var placeholders: [String: String?] = [
     "applicationOrDomainDisplayName": webDomain.domain ?? "(Unknown site)",
@@ -69,7 +120,9 @@ private func webDomainPlaceholders(
       categoryToken: category?.token
     ).first?.id,
     "shieldOpenCount": "\(openCount)",
-    "shieldMessage": webDomainMessage(cfg: cfg, webDomain: webDomain, openCount: openCount),
+    "shieldMessage": shieldMsg,
+    "shieldTitleMessage": titleMsg,
+    "shieldSubtitleMessage": subtitleMsg,
   ]
   if let category {
     let categoryTokenStr = category.token.map { stableTokenString($0) }
@@ -217,6 +270,42 @@ private func messageFromConfig(
   return nil
 }
 
+// multiple messages and arrays
+private func messagesFromConfig(
+  cfg: [String: Any],
+  bundleId: String?,
+  selectionId: String?,
+  openCount: Int
+) -> (shield: String?, title: String?, subtitle: String?) {
+
+  // Helper to compute loop + pick from a specific scoped dict
+  func pick(from scoped: [String: Any]) -> (String?, String?, String?) {
+    let loop = _readBool(scoped["loopMessages"], default: _readBool(cfg["loopMessages"], default: true))
+    let shield = _pickMessage(scoped["messages"], openCount: openCount, loop: loop)
+    let title = _pickMessage(scoped["titleMessages"], openCount: openCount, loop: loop)
+    let subtitle = _pickMessage(scoped["subtitleMessages"], openCount: openCount, loop: loop)
+    return (shield, title, subtitle)
+  }
+
+  // 1) per selection
+  if let sCfg = selectionConfig(cfg: cfg, selectionId: selectionId) {
+    let v = pick(from: sCfg)
+    if v.0 != nil || v.1 != nil || v.2 != nil { return v }
+  }
+
+  // 2) per app
+  if let bundleId,
+     let perApp = cfg["perApp"] as? [String: Any],
+     let appCfg = perApp[bundleId] as? [String: Any] {
+    let v = pick(from: appCfg)
+    if v.0 != nil || v.1 != nil || v.2 != nil { return v }
+  }
+
+  // 3) global root
+  return pick(from: cfg)
+}
+
+
 // =========================================================
 // end of changes
 // =========================================================
@@ -262,6 +351,7 @@ func resolveIcon(dict: [String: Any]) -> UIImage? {
   let iconSystemName = dict["iconSystemName"] as? String
 
   var image: UIImage?
+  let iconAssetName = dict["iconAssetName"] as? String
 
   if let iconSystemName = iconSystemName {
     image = UIImage(systemName: iconSystemName)
@@ -273,6 +363,10 @@ func resolveIcon(dict: [String: Any]) -> UIImage? {
 
   if let iconTint = getColor(color: dict["iconTint"] as? [String: Double]) {
     image?.withTintColor(iconTint)
+  }
+
+  if let iconAssetName = iconAssetName {
+    image = UIImage(named: iconAssetName)
   }
 
   return image
@@ -353,10 +447,8 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
       bundleId = Application(token: tok).bundleIdentifier
     }
     let selectionId = selectionIdFor(applicationToken: application.token) ?? getPossibleFamilyActivitySelectionIds(applicationToken: application.token).first?.id
-    let msg =
-      messageFromConfig(
-        cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: openCount)
-      ?? "Come back to Retention and study!"
+    let picked = messagesFromConfig(cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: openCount)
+    let shieldMsg = picked.shield ?? "Come back to Retention and study!"
 
     var placeholders: [String: String?] = [
       "applicationOrDomainDisplayName": application.localizedDisplayName,
@@ -364,7 +456,9 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
       "tokenType": "application",
       "familyActivitySelectionId": selectionId,
       "shieldOpenCount": "\(openCount)",
-      "shieldMessage": msg,
+      "shieldMessage": shieldMsg,
+      "shieldTitleMessage": picked.title,
+      "shieldSubtitleMessage": picked.subtitle,
     ]
 
     if let global = cfg["globalPlaceholders"] as? [String: String] {
@@ -398,10 +492,8 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
     }
 
     let selectionId = selectionIdFor(applicationToken: application.token, categoryToken: category.token) ?? getPossibleFamilyActivitySelectionIds(applicationToken: application.token, categoryToken: category.token).first?.id
-    let msg =
-      messageFromConfig(
-        cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: max(openCount, 1))
-      ?? "Come back to Retention and study!"
+    let picked = messagesFromConfig(cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: openCount)
+    let shieldMsg = picked.shield ?? "Come back to Retention and study!"
 
     let applicationTokenStr = application.token.map { stableTokenString($0) }  // your helper
     let categoryTokenStr = category.token.map { stableTokenString($0) }  // your helper
@@ -415,7 +507,9 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
       "tokenType": "application_category",
       "familyActivitySelectionId": selectionId,
       "shieldOpenCount": "\(openCount)",
-      "shieldMessage": msg,
+      "shieldMessage": shieldMsg,
+      "shieldTitleMessage": picked.title,
+      "shieldSubtitleMessage": picked.subtitle,
     ]
 
     if let global = cfg["globalPlaceholders"] as? [String: String] {
