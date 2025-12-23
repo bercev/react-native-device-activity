@@ -46,6 +46,55 @@ private func _pickMessage(_ arrAny: Any?, openCount: Int, loop: Bool) -> String?
 }
 
 
+
+
+// MARK: - Icon choice helpers
+
+private func _trimLeadingSlash(_ s: String) -> String {
+  var v = s
+  while v.hasPrefix("/") { v.removeFirst() }
+  return v
+}
+
+// Convert a single icon choice object into the existing config keys that `resolveIcon(dict:)` supports.
+// Expected format: { "type": "SFSymbol" | "AppGroupRelativePath" | "AssetName", "name": "<string>" }
+private func _iconDictFromChoice(_ choiceAny: Any?) -> [String: Any]? {
+  guard let choice = choiceAny as? [String: Any] else { return nil }
+  guard let type = choice["type"] as? String,
+        let rawName = choice["name"] as? String else { return nil }
+
+  let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+  if name.isEmpty { return nil }
+
+  switch type {
+  case "SFSymbol":
+    return ["iconSystemName": name]
+  case "AppGroupRelativePath":
+    return ["iconAppGroupRelativePath": _trimLeadingSlash(name)]
+  case "AssetName":
+    return ["iconAssetName": name]
+  default:
+    return nil
+  }
+}
+
+private func _pickIconOverride(
+  scoped: [String: Any],
+  root: [String: Any],
+  openCount: Int
+) -> [String: Any]? {
+  guard let choices = scoped["iconChoices"] as? [Any], !choices.isEmpty else { return nil }
+  let loop = _readBool(scoped["loopIcons"], default: _readBool(root["loopIcons"], default: true))
+  let idx = _pickIndex(openCount: openCount, arrayCount: choices.count, loop: loop)
+  return _iconDictFromChoice(choices[idx])
+}
+
+private func _mergeConfig(_ base: [String: Any]?, override: [String: Any]?) -> [String: Any]? {
+  guard let override = override, !override.isEmpty else { return base }
+  var out = base ?? [:]
+  for (k, v) in override { out[k] = v }
+  return out
+}
 // ================================
 // These help with getting a specific shield configuration based on selectionid
 private func selectionIdFor(
@@ -362,11 +411,15 @@ func resolveIcon(dict: [String: Any]) -> UIImage? {
   }
 
   if let iconTint = getColor(color: dict["iconTint"] as? [String: Double]) {
-    image?.withTintColor(iconTint)
+    image = image?.withTintColor(iconTint, renderingMode: .alwaysOriginal)
   }
 
   if let iconAssetName = iconAssetName {
     image = UIImage(named: iconAssetName)
+  }
+
+  if image == nil {
+    image = UIImage(systemName: "hourglass")
   }
 
   return image
@@ -428,83 +481,77 @@ func buildShield(placeholders: [String: String?], config: [String: Any]?)
 // Override the functions below to customize the shields used in various situations.
 // The system provides a default appearance for any methods that your subclass doesn't override.
 // Make sure that your class name matches the NSExtensionPrincipalClass in your Info.plist.
+
 class ShieldConfigurationExtension: ShieldConfigurationDataSource {
-  override func configuration(shielding application: Application) -> ShieldConfiguration {
-    // Customize the shield as needed for applications.
-    logger.log("shielding application")
-    let config = getActivitySelectionPrefixedConfigFromUserDefaults(
-      keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
-      fallbackKey: FALLBACK_SHIELD_CONFIGURATION_KEY,
-      applicationToken: application.token
-    )
-    // !! showing a different shield each time
-    let tokenHash = stableAppKey(application)
-    let openCount = bumpOpenCount(appKey: tokenHash)
-    let cfg = loadJSShieldConfig()
-    var bundleId: String? = nil
-    if let tok = application.token {
-      // If `Application(token:).bundleIdentifier` isn’t available on your SDK, this stays nil.
-      bundleId = Application(token: tok).bundleIdentifier
+
+  // MARK: - Modularized shield configuration
+
+  private func iconOverrideForApplication(cfg: [String: Any], bundleId: String?, selectionId: String?, openCount: Int) -> [String: Any]? {
+    // 1) per selection
+    if let sCfg = selectionConfig(cfg: cfg, selectionId: selectionId),
+       let picked = _pickIconOverride(scoped: sCfg, root: cfg, openCount: openCount) {
+      return picked
     }
-    let selectionId = selectionIdFor(applicationToken: application.token) ?? getPossibleFamilyActivitySelectionIds(applicationToken: application.token).first?.id
-    let picked = messagesFromConfig(cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: openCount)
-    let shieldMsg = picked.shield ?? "Come back to Retention and study!"
-
-    var placeholders: [String: String?] = [
-      "applicationOrDomainDisplayName": application.localizedDisplayName,
-      "token": "\(tokenHash)",
-      "tokenType": "application",
-      "familyActivitySelectionId": selectionId,
-      "shieldOpenCount": "\(openCount)",
-      "shieldMessage": shieldMsg,
-      "shieldTitleMessage": picked.title,
-      "shieldSubtitleMessage": picked.subtitle,
-    ]
-
-    if let global = cfg["globalPlaceholders"] as? [String: String] {
-      for (k, v) in global { placeholders[k] = v }
+    // 2) per app
+    if let bundleId,
+       let perApp = cfg["perApp"] as? [String: Any],
+       let appCfg = perApp[bundleId] as? [String: Any],
+       let picked = _pickIconOverride(scoped: appCfg, root: cfg, openCount: openCount) {
+      return picked
     }
-
-    return buildShield(
-      placeholders: placeholders,
-      config: config  // use the scoped config if its available, else default to original
-    )
+    // 3) global
+    return _pickIconOverride(scoped: cfg, root: cfg, openCount: openCount)
   }
 
-  override func configuration(shielding application: Application, in category: ActivityCategory)
-    -> ShieldConfiguration
-  {
-    logger.log("shielding application category")
-    let config = getActivitySelectionPrefixedConfigFromUserDefaults(
+  private func iconOverrideForWebDomain(cfg: [String: Any], webDomain: WebDomain, openCount: Int) -> [String: Any]? {
+    // Same precedence as your web-domain message logic:
+    // 1) per-domain, else 2) global root
+    if let perDomain = cfg["perDomain"] as? [String: Any],
+       let key = webDomain.domain?.lowercased(),
+       let domCfg = perDomain[key] as? [String: Any],
+       let picked = _pickIconOverride(scoped: domCfg, root: cfg, openCount: openCount) {
+      return picked
+    }
+    return _pickIconOverride(scoped: cfg, root: cfg, openCount: openCount)
+  }
+
+  private func configurationForApplication(_ application: Application, category: ActivityCategory?) -> ShieldConfiguration {
+    logger.log("shielding application")
+
+    let nativeConfig = getActivitySelectionPrefixedConfigFromUserDefaults(
       keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
       fallbackKey: FALLBACK_SHIELD_CONFIGURATION_KEY,
       applicationToken: application.token,
-      categoryToken: category.token
+      categoryToken: category?.token
     )
 
+    // openCount (drives both message + icon rotation)
     let tokenHash = stableAppKey(application)
     let openCount = bumpOpenCount(appKey: tokenHash)
+
+    // JS config (messages, placeholders, and now iconChoices)
     let cfg = loadJSShieldConfig()
+
+    // bundleId (for perApp)
     var bundleId: String? = nil
     if let tok = application.token {
-      // If `Application(token:).bundleIdentifier` isn’t available on your SDK, this stays nil.
       bundleId = Application(token: tok).bundleIdentifier
     }
 
-    let selectionId = selectionIdFor(applicationToken: application.token, categoryToken: category.token) ?? getPossibleFamilyActivitySelectionIds(applicationToken: application.token, categoryToken: category.token).first?.id
+    // selectionId (for perSelectionId)
+    let selectionId =
+      selectionIdFor(applicationToken: application.token, categoryToken: category?.token)
+      ?? getPossibleFamilyActivitySelectionIds(applicationToken: application.token, categoryToken: category?.token).first?.id
+
+    // Messages (shieldMessage + optional title/subtitle message arrays)
     let picked = messagesFromConfig(cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: openCount)
     let shieldMsg = picked.shield ?? "Come back to Retention and study!"
 
-    let applicationTokenStr = application.token.map { stableTokenString($0) }  // your helper
-    let categoryTokenStr = category.token.map { stableTokenString($0) }  // your helper
+    // Placeholders
+    let applicationTokenStr = application.token.map { stableTokenString($0) }
     var placeholders: [String: String?] = [
       "applicationOrDomainDisplayName": application.localizedDisplayName,
-      "categoryDisplayName": category.localizedDisplayName,
-      // expose BOTH; let templates pick one
-      "applicationToken": applicationTokenStr,
-      "categoryToken": categoryTokenStr,
-      // keep a generic type for templates if you need it
-      "tokenType": "application_category",
+      "tokenType": category == nil ? "application" : "application_category",
       "familyActivitySelectionId": selectionId,
       "shieldOpenCount": "\(openCount)",
       "shieldMessage": shieldMsg,
@@ -512,47 +559,70 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
       "shieldSubtitleMessage": picked.subtitle,
     ]
 
+    if let category {
+      let categoryTokenStr = category.token.map { stableTokenString($0) }
+      placeholders["categoryDisplayName"] = category.localizedDisplayName
+      placeholders["applicationToken"] = applicationTokenStr
+      placeholders["categoryToken"] = categoryTokenStr
+      placeholders["token"] = categoryTokenStr // keep your generic {token} as category here
+    } else {
+      placeholders["token"] = "\(tokenHash)"
+      placeholders["applicationToken"] = applicationTokenStr
+    }
+
     if let global = cfg["globalPlaceholders"] as? [String: String] {
       for (k, v) in global { placeholders[k] = v }
     }
 
-    return buildShield(
-      placeholders: placeholders,
-      config: config
-    )
+    // Icon override (iconChoices) -> overlay into the native config, without changing buildShield/resolveIcon.
+    let iconOverride = iconOverrideForApplication(cfg: cfg, bundleId: bundleId, selectionId: selectionId, openCount: openCount)
+    let mergedConfig = _mergeConfig(nativeConfig, override: iconOverride)
+
+    return buildShield(placeholders: placeholders, config: mergedConfig)
   }
 
-  override func configuration(shielding webDomain: WebDomain) -> ShieldConfiguration {
+  private func configurationForWebDomain(_ webDomain: WebDomain, category: ActivityCategory?) -> ShieldConfiguration {
     logger.log("shielding web domain")
 
-    let config = getActivitySelectionPrefixedConfigFromUserDefaults(
-      keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
-      fallbackKey: FALLBACK_SHIELD_CONFIGURATION_KEY,
-      webDomainToken: webDomain.token
-    )
-    let domKey = stableDomainKey(webDomain)
-    let openCount = bumpOpenCount(appKey: domKey)
-    let cfg = loadJSShieldConfig()
-    let placeholders = webDomainPlaceholders(
-      webDomain: webDomain, category: nil, openCount: openCount, cfg: cfg)
-    return buildShield(placeholders: placeholders, config: config)
-  }
-
-  override func configuration(shielding webDomain: WebDomain, in category: ActivityCategory)
-    -> ShieldConfiguration
-  {
-    logger.log("shielding web domain category")
-    let config = getActivitySelectionPrefixedConfigFromUserDefaults(
+    let nativeConfig = getActivitySelectionPrefixedConfigFromUserDefaults(
       keyPrefix: SHIELD_CONFIGURATION_FOR_SELECTION_PREFIX,
       fallbackKey: FALLBACK_SHIELD_CONFIGURATION_KEY,
       webDomainToken: webDomain.token,
-      categoryToken: category.token
+      categoryToken: category?.token
     )
+
     let domKey = stableDomainKey(webDomain)
     let openCount = bumpOpenCount(appKey: domKey)
+
     let cfg = loadJSShieldConfig()
     let placeholders = webDomainPlaceholders(
-      webDomain: webDomain, category: category, openCount: openCount, cfg: cfg)
-    return buildShield(placeholders: placeholders, config: config)
+      webDomain: webDomain,
+      category: category,
+      openCount: openCount,
+      cfg: cfg
+    )
+
+    let iconOverride = iconOverrideForWebDomain(cfg: cfg, webDomain: webDomain, openCount: openCount)
+    let mergedConfig = _mergeConfig(nativeConfig, override: iconOverride)
+
+    return buildShield(placeholders: placeholders, config: mergedConfig)
+  }
+
+  // MARK: - System overrides
+
+  override func configuration(shielding application: Application) -> ShieldConfiguration {
+    return configurationForApplication(application, category: nil)
+  }
+
+  override func configuration(shielding application: Application, in category: ActivityCategory) -> ShieldConfiguration {
+    return configurationForApplication(application, category: category)
+  }
+
+  override func configuration(shielding webDomain: WebDomain) -> ShieldConfiguration {
+    return configurationForWebDomain(webDomain, category: nil)
+  }
+
+  override func configuration(shielding webDomain: WebDomain, in category: ActivityCategory) -> ShieldConfiguration {
+    return configurationForWebDomain(webDomain, category: category)
   }
 }
